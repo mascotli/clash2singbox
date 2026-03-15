@@ -2,27 +2,27 @@
 converter.py — Clash → sing-box 核心转换逻辑
 可单独 import 使用，不依赖 CLI 框架
 """
-
+ 
 from __future__ import annotations
-
+ 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
-
+ 
 import httpx
 import yaml
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # 常量
 # ─────────────────────────────────────────────────────────────────────────────
-
+ 
 JUNK_KEYWORDS = [
     "剩余流量", "距离", "重置", "套餐", "到期", "官网", "备用",
     "进不去", "先关闭", "expire", "traffic", "remaining",
 ]
-
+ 
 REGION_MAP: dict[str, list[str]] = {
     "🇸🇬 新加坡":   ["新加坡", "狮城", "sg", "singapore"],
     "🇭🇰 香港":     ["香港", "hk", "hong kong", "hongkong"],
@@ -47,23 +47,23 @@ REGION_MAP: dict[str, list[str]] = {
     "🇳🇱 荷兰":     ["荷兰", "荷蘭", "nl", "netherlands"],
     "🇦🇷 阿根廷":   ["阿根廷", "ar", "argentina"],
 }
-
+ 
 PRIORITY_REGIONS = [
     "🇸🇬 新加坡", "🇭🇰 香港", "🇺🇸 美国", "🇯🇵 日本", "🇹🇼 台湾", "🇰🇷 韩国",
 ]
-
+ 
 SOUTHEAST_ASIA = frozenset([
     "🇲🇾 马来西亚", "🇮🇩 印尼", "🇮🇳 印度", "🇹🇭 泰国", "🇻🇳 越南", "🇵🇭 菲律宾",
 ])
-
+ 
 OTHER_REGIONS = frozenset([
     "🇩🇪 德国", "🇬🇧 英国", "🇫🇷 法国", "🇨🇦 加拿大", "🇧🇷 巴西",
     "🇹🇷 土耳其", "🇦🇺 澳大利亚", "🇷🇺 俄罗斯", "🇳🇱 荷兰", "🇦🇷 阿根廷",
 ])
-
+ 
 # 默认直连端口（SSH 等不适合走代理的端口）
 DEFAULT_DIRECT_PORTS: list[int] = [22]
-
+ 
 # GitHub 相关域名（强制走代理，防止被墙）
 DEFAULT_GITHUB_DOMAINS: list[str] = [
     "github.com",
@@ -71,32 +71,32 @@ DEFAULT_GITHUB_DOMAINS: list[str] = [
     "githubassets.com",
     "ghcr.io",
 ]
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # 数据类
 # ─────────────────────────────────────────────────────────────────────────────
-
+ 
 @dataclass
 class ConvertResult:
     """转换结果"""
     outbounds: list[dict]
     skipped: list[tuple[str, str]]       # (tag, reason)
     region_map: dict[str, list[str]]     # region → [tag, ...]
-
+ 
     @property
     def total(self) -> int:
         return len(self.outbounds)
-
+ 
     @property
     def regions(self) -> list[str]:
         return [r for r in self.region_map if r != "🌐 其他"]
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # 协议转换函数（模块私有）
 # ─────────────────────────────────────────────────────────────────────────────
-
+ 
 def _convert_shadowsocks(p: dict) -> dict:
     return {
         "type": "shadowsocks",
@@ -107,8 +107,8 @@ def _convert_shadowsocks(p: dict) -> dict:
         "password": str(p["password"]),
         "udp_fragment": True,
     }
-
-
+ 
+ 
 def _convert_vmess(p: dict) -> dict:
     ob: dict = {
         "type": "vmess",
@@ -138,8 +138,8 @@ def _convert_vmess(p: dict) -> dict:
             "service_name": p.get("grpc-opts", {}).get("grpc-service-name", ""),
         }
     return ob
-
-
+ 
+ 
 def _convert_trojan(p: dict) -> dict:
     ob: dict = {
         "type": "trojan",
@@ -165,8 +165,8 @@ def _convert_trojan(p: dict) -> dict:
             "service_name": p.get("grpc-opts", {}).get("grpc-service-name", ""),
         }
     return ob
-
-
+ 
+ 
 def _convert_vless(p: dict) -> dict:
     ob: dict = {
         "type": "vless",
@@ -178,7 +178,7 @@ def _convert_vless(p: dict) -> dict:
     }
     reality = p.get("reality-opts", {})
     tls_enabled = str(p.get("tls", "false")).lower() == "true"
-
+ 
     if reality:
         ob["tls"] = {
             "enabled": True,
@@ -199,7 +199,7 @@ def _convert_vless(p: dict) -> dict:
             "server_name": p.get("servername") or p.get("sni") or p["server"],
             "insecure": bool(p.get("skip-cert-verify", False)),
         }
-
+ 
     network = p.get("network", "tcp")
     if network == "ws":
         ob["transport"] = {
@@ -214,8 +214,8 @@ def _convert_vless(p: dict) -> dict:
     elif network == "http":
         ob["transport"] = {"type": "http"}
     return ob
-
-
+ 
+ 
 def _convert_hysteria2(p: dict) -> dict:
     return {
         "type": "hysteria2",
@@ -229,8 +229,8 @@ def _convert_hysteria2(p: dict) -> dict:
             "insecure": bool(p.get("skip-cert-verify", False)),
         },
     }
-
-
+ 
+ 
 _CONVERTERS: dict = {
     "ss":        _convert_shadowsocks,
     "vmess":     _convert_vmess,
@@ -239,31 +239,31 @@ _CONVERTERS: dict = {
     "hysteria2": _convert_hysteria2,
     "hy2":       _convert_hysteria2,
 }
-
-
+ 
+ 
 # ─────────────────────────────────────────────────────────────────────────────
 # 核心转换类
 # ─────────────────────────────────────────────────────────────────────────────
-
+ 
 class ClashToSingboxConverter:
     """
     Clash 订阅 → sing-box 配置转换器
-
+ 
     基本用法::
-
+ 
         from clash2singbox.converter import ClashToSingboxConverter
-
+ 
         converter = ClashToSingboxConverter()
         config = converter.convert_url("https://your-sub-url")
-
+ 
         # 或从文件
         config = converter.convert_file(Path("sub.yaml"))
-
+ 
         # 带代理
         converter = ClashToSingboxConverter(proxy="http://127.0.0.1:7890")
         config = converter.convert_url("https://your-sub-url")
     """
-
+ 
     def __init__(
         self,
         proxy: Optional[str] = None,
@@ -283,28 +283,28 @@ class ClashToSingboxConverter:
         self.github_domains: list[str] = (
             github_domains if github_domains is not None else DEFAULT_GITHUB_DOMAINS
         )
-
+ 
     # ── 公开方法 ──────────────────────────────────────────────────────────────
-
+ 
     def convert_url(self, url: str) -> dict:
         """从订阅 URL 下载并转换为 sing-box 配置"""
         raw = self._fetch(url)
         clash_cfg = self._parse_yaml(raw)
         return self._build(clash_cfg)
-
+ 
     def convert_file(self, path: Path) -> dict:
         """从本地 YAML 文件转换为 sing-box 配置"""
         raw = path.read_text(encoding="utf-8")
         clash_cfg = self._parse_yaml(raw)
         return self._build(clash_cfg)
-
+ 
     def convert_source(self, source: str) -> dict:
         """自动判断 source 是 URL 还是文件路径"""
         parsed = urlparse(source)
         if parsed.scheme in ("http", "https"):
             return self.convert_url(source)
         return self.convert_file(Path(source))
-
+ 
     def parse_proxies(self, proxies: list[dict]) -> ConvertResult:
         """
         仅转换节点列表，不构建完整配置。
@@ -313,20 +313,20 @@ class ClashToSingboxConverter:
         outbounds: list[dict] = []
         skipped: list[tuple[str, str]] = []
         region_map: dict[str, list[str]] = {}
-
+ 
         for p in proxies:
             name = p.get("name", "")
             ptype = p.get("type", "").lower()
-
+ 
             if self._is_junk(name):
                 skipped.append((name, "信息类条目"))
                 continue
-
+ 
             converter_fn = _CONVERTERS.get(ptype)
             if not converter_fn:
                 skipped.append((name, f"不支持的类型: {ptype}"))
                 continue
-
+ 
             try:
                 ob = converter_fn(p)
                 # 清理空值字段
@@ -336,30 +336,30 @@ class ClashToSingboxConverter:
                 region_map.setdefault(region or "🌐 其他", []).append(name)
             except Exception as e:
                 skipped.append((name, f"转换错误: {e}"))
-
+ 
         return ConvertResult(
             outbounds=outbounds,
             skipped=skipped,
             region_map=region_map,
         )
-
+ 
     def build_singbox_config(self, result: ConvertResult) -> dict:
         """根据 ConvertResult 构建完整 sing-box 配置"""
         outbounds = result.outbounds
         region_map = result.region_map
         all_tags = [ob["tag"] for ob in outbounds]
-
+ 
         # 自动选择：优先地区节点参与测速
         auto_tags: list[str] = []
         for region in PRIORITY_REGIONS:
             auto_tags.extend(region_map.get(region, []))
         if not auto_tags:
             auto_tags = all_tags[:20]
-
+ 
         # 构建地区 selector
         region_selectors: list[dict] = []
         selector_tags: list[str] = []
-
+ 
         for region in PRIORITY_REGIONS:
             tags = region_map.get(region, [])
             if not tags:
@@ -371,7 +371,7 @@ class ClashToSingboxConverter:
                 "default": tags[0],
             })
             selector_tags.append(region)
-
+ 
         sea_tags: list[str] = []
         for r in SOUTHEAST_ASIA:
             sea_tags.extend(region_map.get(r, []))
@@ -383,7 +383,7 @@ class ClashToSingboxConverter:
                 "default": sea_tags[0],
             })
             selector_tags.append("🌏 东南亚")
-
+ 
         other_tags: list[str] = []
         for r in OTHER_REGIONS:
             other_tags.extend(region_map.get(r, []))
@@ -396,7 +396,7 @@ class ClashToSingboxConverter:
                 "default": other_tags[0],
             })
             selector_tags.append("🌍 其他地区")
-
+ 
         top_outbounds = [
             {
                 "type": "selector",
@@ -417,15 +417,15 @@ class ClashToSingboxConverter:
             {"type": "direct", "tag": "direct"},
             {"type": "block",  "tag": "block"},
         ]
-
+ 
         # 构建路由规则
         route_rules: list[dict] = [
             {"network": "icmp", "outbound": "direct"},
         ]
-
+ 
         if self.direct_ports:
             route_rules.append({"port": self.direct_ports, "outbound": "direct"})
-
+ 
         route_rules += [
             {
                 "type": "logical",
@@ -440,10 +440,10 @@ class ClashToSingboxConverter:
             {"rule_set": ["geosite-cn", "geoip-cn"], "outbound": "direct"},
             {"rule_set": ["geosite-geolocation-!cn"], "outbound": "✈️ 节点选择"},
         ]
-
+ 
         return {
-            "log": {"level": "info", "timestamp": True},
-
+            "log": {"level": "info", "timestamp": True, "output": "/var/log/sing-box.log"},
+ 
             "dns": {
                 "servers": [
                     {
@@ -484,7 +484,7 @@ class ClashToSingboxConverter:
                 "final": "dns-remote",
                 "independent_cache": True,
             },
-
+ 
             "inbounds": [
                 {
                     "type": "tun",
@@ -503,9 +503,9 @@ class ClashToSingboxConverter:
                     "sniff": True,
                 },
             ],
-
+ 
             "outbounds": top_outbounds,
-
+ 
             "route": {
                 "default_domain_resolver": "dns-local",
                 "rules": route_rules,
@@ -546,7 +546,7 @@ class ClashToSingboxConverter:
                 "final": "✈️ 节点选择",
                 "auto_detect_interface": True,
             },
-
+ 
             "experimental": {
                 "cache_file": {
                     "enabled": True,
@@ -562,40 +562,39 @@ class ClashToSingboxConverter:
                 },
             },
         }
-
+ 
     # ── 内部方法 ──────────────────────────────────────────────────────────────
-
+ 
     def _fetch(self, url: str) -> str:
-        proxies_map = {"http://": self.proxy, "https://": self.proxy} if self.proxy else None
         resp = httpx.get(
             url,
             follow_redirects=True,
             timeout=30,
             headers={"User-Agent": "clash"},
-            proxies=proxies_map,
+            proxy=self.proxy,
         )
         resp.raise_for_status()
         return resp.text
-
+ 
     def _build(self, clash_cfg: dict) -> dict:
         proxies = clash_cfg.get("proxies", [])
         if not proxies:
             raise ValueError("未找到任何节点 (proxies 字段为空)")
         result = self.parse_proxies(proxies)
         return self.build_singbox_config(result)
-
+ 
     @staticmethod
     def _parse_yaml(content: str) -> dict:
         result = yaml.safe_load(content)
         if not isinstance(result, dict):
             raise ValueError("YAML 内容不是有效的 Clash 配置")
         return result
-
+ 
     @staticmethod
     def _is_junk(tag: str) -> bool:
         tag_lower = tag.lower()
         return any(kw in tag_lower for kw in JUNK_KEYWORDS)
-
+ 
     @staticmethod
     def _detect_region(tag: str) -> Optional[str]:
         tag_lower = tag.lower()
@@ -603,3 +602,4 @@ class ClashToSingboxConverter:
             if any(kw in tag_lower for kw in keywords):
                 return region
         return None
+    
