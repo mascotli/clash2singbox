@@ -10,7 +10,7 @@ readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your@email.com"},
+    {name = "mascot li", email = "mascotli@outlook.com"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -42,10 +42,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/clash2singbox"
-Documentation = "https://github.com/yourusername/clash2singbox#readme"
-Repository = "https://github.com/yourusername/clash2singbox"
-Issues = "https://github.com/yourusername/clash2singbox/issues"
+Homepage = "https://github.com/mascotli/clash2singbox"
+Documentation = "https://github.com/mascotli/clash2singbox#readme"
+Repository = "https://github.com/mascotli/clash2singbox"
+Issues = "https://github.com/mascotli/clash2singbox/issues"
 
 [project.scripts]
 clash2singbox = "clash2singbox.main:app"
