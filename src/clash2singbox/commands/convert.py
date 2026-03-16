@@ -12,7 +12,8 @@ from clash2singbox.utils import console, do_convert, parse_ports
 app = typer.Typer()
 
 
-@app.callback(invoke_without_command=True)
+# @app.callback(invoke_without_command=True)
+# @app.command()
 def convert(
     source: str = typer.Argument(..., help="Clash 订阅 URL 或本地 YAML 文件路径"),
     output: Optional[Path] = typer.Option(None, "-o", "--output", help="输出文件路径（默认 config.json）"),

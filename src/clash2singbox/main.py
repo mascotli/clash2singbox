@@ -6,7 +6,9 @@ main.py — CLI 入口，只负责注册子命令
 
 import typer
 
-from clash2singbox.commands import convert, deps, sub
+from clash2singbox.commands import sub
+from clash2singbox.commands.convert import convert
+from clash2singbox.commands.deps import check_deps
 from clash2singbox.commands.help import print_help
 
 app = typer.Typer(
@@ -34,9 +36,16 @@ def default(
         raise typer.Exit()
 
 
-app.add_typer(convert.app, name="convert")
-app.add_typer(sub.app,     name="sub")
-app.add_typer(deps.app,    name="check-deps")
+# app.add_typer(convert.app, name="convert")
+# app.add_typer(sub.app,     name="sub")
+# app.add_typer(deps.app,    name="check-deps")
+
+# 单命令直接注册
+app.command("convert")(convert)
+app.command("check-deps")(check_deps)
+
+# 多子命令组用 add_typer
+app.add_typer(sub.app, name="sub")
 
 if __name__ == "__main__":
     app()
